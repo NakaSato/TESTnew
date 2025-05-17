@@ -1,13 +1,36 @@
 #include "WiFiManager.h"
 
-// Constructor
+// Constructor for single network (legacy support)
 WiFiManager::WiFiManager(const String& ssid, const String& password, int statusLedPin, unsigned long connectionTimeout) : 
     _ssid(ssid), 
     _password(password), 
     _statusLedPin(statusLedPin),
     _connectionTimeout(connectionTimeout),
     _lastReconnectAttempt(0),
-    _isConnected(false) {
+    _isConnected(false),
+    _isLegacyMode(true),
+    _networkCount(0),
+    _currentNetworkIndex(0) {
+    
+    // Initialize status LED if specified
+    if (_statusLedPin >= 0) {
+        pinMode(_statusLedPin, OUTPUT);
+        digitalWrite(_statusLedPin, LOW);
+    }
+    
+    // Add the primary network to the network list
+    addNetwork(ssid, password);
+}
+
+// Constructor for multi-network mode
+WiFiManager::WiFiManager(int statusLedPin, unsigned long connectionTimeout) :
+    _statusLedPin(statusLedPin),
+    _connectionTimeout(connectionTimeout),
+    _lastReconnectAttempt(0),
+    _isConnected(false),
+    _isLegacyMode(false),
+    _networkCount(0),
+    _currentNetworkIndex(0) {
     
     // Initialize status LED if specified
     if (_statusLedPin >= 0) {
@@ -16,19 +39,63 @@ WiFiManager::WiFiManager(const String& ssid, const String& password, int statusL
     }
 }
 
+// Add a WiFi network to the list
+bool WiFiManager::addNetwork(const String& ssid, const String& password) {
+    if (_networkCount >= MAX_WIFI_NETWORKS) {
+        Serial.println("Cannot add more networks, maximum reached");
+        return false;
+    }
+    
+    _networks[_networkCount].ssid = ssid;
+    _networks[_networkCount].password = password;
+    _networks[_networkCount].active = true;
+    _networkCount++;
+    
+    Serial.print("Added WiFi network: ");
+    Serial.println(ssid);
+    return true;
+}
+
 // Initialize WiFi connection
 bool WiFiManager::begin() {
-    Serial.print("Connecting to WiFi network: ");
-    Serial.println(_ssid);
+    // If no networks configured, return false
+    if (_networkCount == 0) {
+        Serial.println("No WiFi networks configured!");
+        return false;
+    }
+    
+    Serial.println("Starting WiFi connection...");
     
     // Set WiFi mode to station (client) and reset WiFi
     WiFi.mode(WIFI_STA);
     WiFi.disconnect(true, true);  // Disconnect and clear credentials
     delay(1000);  // Increased delay to ensure WiFi hardware reset
     
+    // Try connecting to each network in order until one succeeds
+    for (int i = 0; i < _networkCount; i++) {
+        if (_networks[i].active) {
+            Serial.print("Trying to connect to WiFi network: ");
+            Serial.println(_networks[i].ssid);
+            
+            // Try to connect to this network
+            if (tryConnect(_networks[i].ssid, _networks[i].password)) {
+                _currentNetworkIndex = i;
+                return true;
+            }
+        }
+    }
+    
+    Serial.println("Failed to connect to any WiFi network!");
+    return tryAdvancedConnection();
+}
+
+// Try to connect to a specific network
+bool WiFiManager::tryConnect(const String& ssid, const String& password) {
+    Serial.print("Connecting to WiFi network: ");
+    Serial.println(ssid);
+    
     // Start connection process
-    Serial.println("Starting WiFi connection attempt...");
-    WiFi.begin(_ssid.c_str(), _password.c_str());
+    WiFi.begin(ssid.c_str(), password.c_str());
     
     Serial.print("MAC Address: ");
     Serial.println(WiFi.macAddress());
@@ -55,7 +122,7 @@ bool WiFiManager::begin() {
                 Serial.println("\nRetrying WiFi connection...");
                 WiFi.disconnect();
                 delay(500);
-                WiFi.begin(_ssid.c_str(), _password.c_str());
+                WiFi.begin(ssid.c_str(), password.c_str());
                 attemptCount = 0;
             }
         }
@@ -73,18 +140,9 @@ bool WiFiManager::begin() {
         Serial.println("\nWiFi connected successfully!");
         printStatus();
         return true;
-    } else {
-        _isConnected = false;
-        
-        // Turn off status LED if available
-        if (_statusLedPin >= 0) {
-            digitalWrite(_statusLedPin, LOW);
-        }
-        
-        Serial.println("\nStandard WiFi connection failed! Trying advanced methods...");
-        // Try the advanced connection methods
-        return tryAdvancedConnection();
     }
+    
+    return false;
 }
 
 // Check and maintain WiFi connection
@@ -117,7 +175,7 @@ bool WiFiManager::checkConnection() {
 
 // Reconnect to WiFi if disconnected
 bool WiFiManager::reconnect() {
-    Serial.println("Attempting WiFi reconnection with power cycle...");
+    Serial.println("Attempting WiFi reconnection...");
     
     // Power cycle the WiFi hardware
     WiFi.disconnect(true, true);  // Disconnect and clear stored credentials
@@ -127,62 +185,59 @@ bool WiFiManager::reconnect() {
     WiFi.mode(WIFI_STA);
     delay(500);
     
-    // Try the first connection method
-    Serial.println("Reconnection attempt 1: Standard method");
-    WiFi.begin(_ssid.c_str(), _password.c_str());
-    
-    // Wait for connection with a short timeout
-    unsigned long startTime = millis();
-    unsigned short retryTimeout = 10000; // 10 seconds
-    
-    while (WiFi.status() != WL_CONNECTED && (millis() - startTime < retryTimeout)) {
-        if (_statusLedPin >= 0) {
-            digitalWrite(_statusLedPin, !digitalRead(_statusLedPin));
+    // Try to reconnect to the current network first
+    if (_networkCount > 0) {
+        int startIndex = _currentNetworkIndex;
+        int attempts = 0;
+        
+        // Try all networks, starting with the current one
+        do {
+            int networkIndex = (startIndex + attempts) % _networkCount;
+            
+            if (_networks[networkIndex].active) {
+                Serial.print("Reconnection attempt for network: ");
+                Serial.println(_networks[networkIndex].ssid);
+                
+                if (tryConnect(_networks[networkIndex].ssid, _networks[networkIndex].password)) {
+                    _currentNetworkIndex = networkIndex;
+                    return true;
+                }
+            }
+            
+            attempts++;
+        } while (attempts < _networkCount);
+    } else if (_isLegacyMode) {
+        // Legacy mode - try the primary network
+        Serial.println("Reconnection attempt 1: Standard method");
+        WiFi.begin(_ssid.c_str(), _password.c_str());
+        
+        // Wait for connection with a short timeout
+        unsigned long startTime = millis();
+        unsigned short retryTimeout = 10000; // 10 seconds
+        
+        while (WiFi.status() != WL_CONNECTED && (millis() - startTime < retryTimeout)) {
+            if (_statusLedPin >= 0) {
+                digitalWrite(_statusLedPin, !digitalRead(_statusLedPin));
+            }
+            delay(500);
+            Serial.print(".");
         }
-        delay(500);
-        Serial.print(".");
+        
+        // If connected, return success
+        if (WiFi.status() == WL_CONNECTED) {
+            _isConnected = true;
+            if (_statusLedPin >= 0) {
+                digitalWrite(_statusLedPin, HIGH);
+            }
+            Serial.println("\nWiFi reconnected successfully!");
+            printStatus();
+            return true;
+        }
     }
     
-    // If connected, return success
-    if (WiFi.status() == WL_CONNECTED) {
-        _isConnected = true;
-        if (_statusLedPin >= 0) {
-            digitalWrite(_statusLedPin, HIGH);
-        }
-        Serial.println("\nWiFi reconnected successfully!");
-        printStatus();
-        return true;
-    }
-    
-    // Try alternative connection method
-    Serial.println("\nStandard reconnection failed. Trying alternative method...");
-    WiFi.disconnect();
-    delay(1000);
-    
-    // Force a specific channel (1) and try again
-    WiFi.begin(_ssid.c_str(), _password.c_str(), 1);
-    
-    startTime = millis();
-    while (WiFi.status() != WL_CONNECTED && (millis() - startTime < retryTimeout)) {
-        if (_statusLedPin >= 0) {
-            digitalWrite(_statusLedPin, !digitalRead(_statusLedPin));
-        }
-        delay(500);
-        Serial.print(".");
-    }
-    
-    if (WiFi.status() == WL_CONNECTED) {
-        _isConnected = true;
-        if (_statusLedPin >= 0) {
-            digitalWrite(_statusLedPin, HIGH);
-        }
-        Serial.println("\nWiFi reconnected with alternative method!");
-        printStatus();
-        return true;
-    }
-    
-    Serial.println("\nAll reconnection attempts failed!");
-    return false;
+    // If all networks failed, try advanced connection methods
+    Serial.println("\nAll standard reconnection attempts failed. Trying advanced methods...");
+    return tryAdvancedConnection();
 }
 
 // Try advanced connection methods when standard approach fails
@@ -309,6 +364,125 @@ bool WiFiManager::tryAdvancedConnection() {
     return false;
 }
 
+// OTA firmware update
+bool WiFiManager::updateFirmware(const String& firmwareUrl, const String& currentVersion) {
+    if (!isConnected()) {
+        Serial.println("Cannot update firmware: Not connected to WiFi");
+        return false;
+    }
+
+    Serial.println("Starting firmware update...");
+    Serial.print("Current version: ");
+    Serial.println(currentVersion.length() > 0 ? currentVersion : "unknown");
+    Serial.print("Update URL: ");
+    Serial.println(firmwareUrl);
+
+    // Set up HTTP client with timeout
+    WiFiClient client;
+    
+    // LED status indicator for update
+    bool ledState = false;
+    if (_statusLedPin >= 0) {
+        ledState = digitalRead(_statusLedPin);
+        // Start LED flashing rapidly to indicate update process
+        for (int i = 0; i < 10; i++) {
+            digitalWrite(_statusLedPin, !digitalRead(_statusLedPin));
+            delay(100);
+        }
+    }
+
+    // Setup update callback
+    #if defined(ESP8266)
+        ESPhttpUpdate.setLedPin(_statusLedPin, LOW);
+        
+        // Define update events callback
+        ESPhttpUpdate.onStart([]() {
+            Serial.println("Update start");
+        });
+        ESPhttpUpdate.onEnd([]() {
+            Serial.println("Update end");
+        });
+        ESPhttpUpdate.onProgress([](int cur, int total) {
+            Serial.printf("Update progress: %d%%\n", (cur * 100) / total);
+        });
+        ESPhttpUpdate.onError([](int err) {
+            Serial.printf("Update error: %d\n", err);
+        });
+
+        // Set timeout
+        ESPhttpUpdate.setTimeout(30000);
+        
+        // Perform update
+        t_httpUpdate_return ret = ESPhttpUpdate.update(client, firmwareUrl);
+    #elif defined(ESP32)
+        HTTPUpdate httpUpdate;
+        httpUpdate.setLedPin(_statusLedPin, LOW);
+        
+        // Use a proper client timeout (ESP32 uses seconds, not milliseconds)
+        // 30 is too short, setting to 60 seconds for safety
+        client.setTimeout(60);
+        
+        // Register callback functions
+        httpUpdate.onStart([]() {
+            Serial.println("Update start");
+        });
+        httpUpdate.onEnd([]() {
+            Serial.println("Update end");
+        });
+        httpUpdate.onProgress([](int cur, int total) {
+            Serial.printf("Update progress: %d%%\n", (cur * 100) / total);
+        });
+        httpUpdate.onError([](int err) {
+            Serial.printf("Update error: %d\n", err);
+        });
+
+        // Create an Update object from the library's namespace for ESP32
+        HTTPUpdateResult ret;
+        ret = httpUpdate.update(client, firmwareUrl);
+    #endif
+
+    // Handle update result
+    switch (ret) {
+        case HTTP_UPDATE_FAILED:
+            #if defined(ESP8266)
+                Serial.printf("Update failed. Error (%d): %s\n", 
+                    ESPhttpUpdate.getLastError(), 
+                    ESPhttpUpdate.getLastErrorString().c_str());
+            #elif defined(ESP32)
+                Serial.printf("Update failed. Error (%d): %s\n", 
+                    httpUpdate.getLastError(), 
+                    httpUpdate.getLastErrorString().c_str());
+            #endif
+            // Restore LED state
+            if (_statusLedPin >= 0) {
+                digitalWrite(_statusLedPin, ledState);
+            }
+            return false;
+            
+        case HTTP_UPDATE_NO_UPDATES:
+            Serial.println("No update needed");
+            // Restore LED state
+            if (_statusLedPin >= 0) {
+                digitalWrite(_statusLedPin, ledState);
+            }
+            return true;
+            
+        case HTTP_UPDATE_OK:
+            Serial.println("Update successful! Rebooting...");
+            delay(1000);
+            ESP.restart();
+            return true; // Actually never reached due to restart
+            
+        default:
+            Serial.println("Unexpected update result");
+            // Restore LED state
+            if (_statusLedPin >= 0) {
+                digitalWrite(_statusLedPin, ledState);
+            }
+            return false;
+    }
+}
+
 // Get connection status
 bool WiFiManager::isConnected() const {
     return _isConnected;
@@ -372,8 +546,17 @@ void WiFiManager::printConnectionStatus(wl_status_t status) {
 void WiFiManager::printStatus() const {
     if (WiFi.status() == WL_CONNECTED) {
         Serial.println("=== WiFi Status ===");
-        Serial.print("SSID: ");
-        Serial.println(_ssid);
+        if (_networkCount > 0) {
+            Serial.print("SSID: ");
+            Serial.println(_networks[_currentNetworkIndex].ssid);
+            Serial.print("Network Index: ");
+            Serial.print(_currentNetworkIndex + 1);
+            Serial.print(" of ");
+            Serial.println(_networkCount);
+        } else {
+            Serial.print("SSID: ");
+            Serial.println(_ssid);
+        }
         Serial.print("IP Address: ");
         Serial.println(getIPAddress());
         Serial.print("MAC Address: ");
@@ -439,24 +622,26 @@ void WiFiManager::scanNetworks() {
             delay(10);
         }
         
-        // Check if our target network is visible
-        bool targetNetworkFound = false;
-        for (int i = 0; i < numNetworks; i++) {
-            if (WiFi.SSID(i) == _ssid) {
-                targetNetworkFound = true;
-                Serial.print("Target network '");
-                Serial.print(_ssid);
-                Serial.print("' found with signal strength: ");
-                Serial.print(WiFi.RSSI(i));
-                Serial.println(" dBm");
-                break;
+        // Check if our configured networks are visible
+        for (int n = 0; n < _networkCount; n++) {
+            bool networkFound = false;
+            for (int i = 0; i < numNetworks; i++) {
+                if (WiFi.SSID(i) == _networks[n].ssid) {
+                    networkFound = true;
+                    Serial.print("Configured network '");
+                    Serial.print(_networks[n].ssid);
+                    Serial.print("' found with signal strength: ");
+                    Serial.print(WiFi.RSSI(i));
+                    Serial.println(" dBm");
+                    break;
+                }
             }
-        }
-        
-        if (!targetNetworkFound) {
-            Serial.print("TARGET NETWORK '");
-            Serial.print(_ssid);
-            Serial.println("' NOT FOUND! Please check SSID spelling or if network is in range.");
+            
+            if (!networkFound) {
+                Serial.print("Configured network '");
+                Serial.print(_networks[n].ssid);
+                Serial.println("' NOT FOUND! Please check SSID spelling or if network is in range.");
+            }
         }
     }
     
