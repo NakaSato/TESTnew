@@ -204,6 +204,31 @@ The MQTTManager includes:
 - Topic management
 - JSON payload support via ArduinoJson
 
+## Continuous Integration with GitHub Actions
+
+This project includes GitHub Actions workflows to automatically build, test, and validate the project whenever changes are pushed to the repository.
+
+### Automatic Builds
+
+The CI workflow performs the following tasks:
+- Builds the firmware for multiple platforms (Windows, Linux, macOS)
+- Validates code quality with static analysis
+- Checks documentation formatting
+- Produces binary artifacts that can be downloaded
+
+### Using the Workflow
+
+1. Push your changes to the repository
+2. GitHub will automatically run the workflow
+3. Check the Actions tab for build results
+4. Download the compiled firmware from the Artifacts section
+
+### Workflow Files
+
+- `.github/workflows/platformio.yml`: Main workflow for PlatformIO-based ESP32 project
+
+See the GitHub Actions tab in the repository for the latest build status and results.
+
 ## License
 
 This project is open source and available under the MIT License.

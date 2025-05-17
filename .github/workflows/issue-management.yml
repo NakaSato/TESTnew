@@ -1,0 +1,67 @@
+name: Issue and PR Management
+
+on:
+  issues:
+    types: [opened, reopened, labeled, unlabeled]
+  pull_request:
+    types: [opened, reopened, labeled, unlabeled]
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Initial triage
+      uses: actions/github-script@v6
+      with:
+        github-token: ${{secrets.GITHUB_TOKEN}}
+        script: |
+          const { owner, repo } = context.repo;
+          
+          // Handle issues
+          if (context.payload.issue) {
+            const issue = context.payload.issue;
+            
+            // Auto-label new issues without labels
+            if (context.payload.action === 'opened' && issue.labels.length === 0) {
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: issue.number,
+                labels: ['needs-triage']
+              });
+              
+              console.log(`Added 'needs-triage' label to issue #${issue.number}`);
+            }
+          }
+          
+          // Handle pull requests
+          if (context.payload.pull_request) {
+            const pr = context.payload.pull_request;
+            
+            // Auto-label new PRs without labels
+            if (context.payload.action === 'opened' && pr.labels.length === 0) {
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: pr.number,
+                labels: ['needs-review']
+              });
+              
+              console.log(`Added 'needs-review' label to PR #${pr.number}`);
+            }
+          }
+
+  stale-issues:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/stale@v7
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        stale-issue-message: 'This issue has been automatically marked as stale because it has not had recent activity. It will be closed if no further activity occurs. Thank you for your contributions.'
+        stale-pr-message: 'This pull request has been automatically marked as stale because it has not had recent activity. It will be closed if no further activity occurs. Thank you for your contributions.'
+        stale-issue-label: 'stale'
+        stale-pr-label: 'stale'
+        days-before-stale: 60
+        days-before-close: 7
+        exempt-issue-labels: 'pinned,security,bug'
+        exempt-pr-labels: 'pinned,security,work-in-progress'

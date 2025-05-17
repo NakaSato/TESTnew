@@ -1,0 +1,20 @@
+# These owners will be the default owners for everything in
+# the repo. Unless a later match takes precedence,
+# these users will be requested for review when someone 
+# opens a pull request.
+*       @chanthawat
+
+# Hardware-specific code
+include/Config.h  @chanthawat
+src/main.cpp      @chanthawat
+
+# HTTP Server components
+include/HttpServer.h  @chanthawat
+src/HttpServer.cpp    @chanthawat
+
+# Wi-Fi and network code
+include/WiFiManager.h  @chanthawat
+src/WiFiManager.cpp    @chanthawat
+
+# Documentation
+*.md    @chanthawat
