@@ -28,7 +28,7 @@ private:
 
 public:
     // Constructor
-    HttpServer(WiFiManager* wifiManager, int port = 80);
+    explicit HttpServer(WiFiManager* wifiManager, int port = 80);
     
     // Destructor
     ~HttpServer();

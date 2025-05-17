@@ -32,6 +32,13 @@ WiFiManager::WiFiManager(int statusLedPin, unsigned long connectionTimeout) :
     _networkCount(0),
     _currentNetworkIndex(0) {
     
+    // Initialize the networks array
+    for (int i = 0; i < MAX_WIFI_NETWORKS; i++) {
+        _networks[i].active = false;
+        _networks[i].ssid = "";
+        _networks[i].password = "";
+    }
+    
     // Initialize status LED if specified
     if (_statusLedPin >= 0) {
         pinMode(_statusLedPin, OUTPUT);
