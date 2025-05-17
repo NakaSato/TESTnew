@@ -10,7 +10,7 @@
 
 [env:node32s]
 platform = espressif32
-board = node32s
+board = esp32-s3-devkitc-1
 framework = arduino
 monitor_speed = 115200
 upload_speed = 115200
@@ -18,8 +18,8 @@ upload_port = /dev/cu.usbmodem5A4B0196721
 upload_protocol = esptool
 upload_flags = 
 	--before=no_reset
-	--after=hard_reset
-	--chip=esp32
+	--after=no_reset
+	--chip=esp32s3
 monitor_port = /dev/cu.usbmodem5A4B0196721
 lib_deps = 
 	WiFi
@@ -40,7 +40,7 @@ build_flags = -Iinclude
 
 [env:servo_example]
 platform = espressif32
-board = node32s
+board = esp32-s3-devkitc-1
 framework = arduino
 monitor_speed = 115200
 upload_speed = 115200
@@ -48,13 +48,13 @@ upload_port = /dev/cu.usbmodem5A4B0196721
 upload_protocol = esptool
 upload_flags = 
 	--before=no_reset
-	--after=hard_reset
-	--chip=esp32
+	--after=no_reset
+	--chip=esp32s3
 monitor_port = /dev/cu.usbmodem5A4B0196721
 lib_deps = 
 	madhephaestus/ESP32Servo@^0.13.0
 build_src_filter = -<*> +<../examples/ServoControlExample.cpp>
-build_flags = -Iinclude
+build_flags = -Iinclude -DCORE_DEBUG_LEVEL=5
 monitor_filters = 
 	colorize
 	time
@@ -64,7 +64,7 @@ monitor_dtr = 0
 
 [env:servo_diagnostic]
 platform = espressif32
-board = node32s
+board = esp32-s3-devkitc-1
 framework = arduino
 monitor_speed = 115200
 upload_speed = 115200
@@ -72,13 +72,13 @@ upload_port = /dev/cu.usbmodem5A4B0196721
 upload_protocol = esptool
 upload_flags = 
 	--before=no_reset
-	--after=hard_reset
-	--chip=esp32
+	--after=no_reset
+	--chip=esp32s3
 monitor_port = /dev/cu.usbmodem5A4B0196721
 lib_deps = 
 	madhephaestus/ESP32Servo@^0.13.0
 build_src_filter = -<*> +<../examples/ServoDiagnostic.cpp>
-build_flags = -Iinclude
+build_flags = -Iinclude -DCORE_DEBUG_LEVEL=5
 monitor_filters = 
 	colorize
 	time
