@@ -12,6 +12,10 @@
     #error "This library only supports ESP8266 and ESP32 boards"
 #endif
 
+// Include required libraries for web server functionality
+#include <WebServer.h>
+#include <Update.h>
+
 // Maximum number of WiFi networks to store
 #define MAX_WIFI_NETWORKS 5
 
@@ -60,7 +64,21 @@ public:
     // OTA firmware update
     bool updateFirmware(const String& firmwareUrl, const String& currentVersion = "");
     
-    // Moving this from private to public to fix the access error
+    // Start web server for file uploads
+    void beginUploadServer(int port = 80);
+    
+    // Handle server tasks (call in loop)
+    void handleUploadServer();
+    
+    // Start telnet-style monitoring
+    void beginRemoteMonitor(int port = 23);
+    
+    // Handle monitoring tasks (call in loop)
+    void handleRemoteMonitor();
+    
+    // Write to remote monitor
+    void remoteLog(const String& message);
+    
     // Print WiFi connection status
     void printConnectionStatus(wl_status_t status);
     
@@ -86,8 +104,25 @@ private:
     bool _isConnected;
     bool _isLegacyMode;
     
+    // Web server for OTA uploads
+    WebServer* _uploadServer = nullptr;
+    int _uploadServerPort = 80;
+    bool _uploadServerActive = false;
+    
+    // Telnet-style monitoring
+    WiFiServer* _monitorServer = nullptr;
+    WiFiClient _monitorClient;
+    int _monitorPort = 23;
+    bool _monitorActive = false;
+    
     // Try to connect to a specific network
     bool tryConnect(const String& ssid, const String& password);
+    
+    // Upload server pages
+    void setupUploadServer();
+    void handleUploadRoot();
+    void handleFileUpload();
+    void handleUploadComplete();
 };
 
 #endif // WIFI_MANAGER_H

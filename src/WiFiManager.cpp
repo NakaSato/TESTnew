@@ -649,3 +649,375 @@ void WiFiManager::scanNetworks() {
     WiFi.scanDelete();
     Serial.println("Network scan complete.");
 }
+
+// Start web server for file uploads
+void WiFiManager::beginUploadServer(int port) {
+    if (!isConnected()) {
+        Serial.println("Cannot start upload server: Not connected to WiFi");
+        return;
+    }
+    
+    _uploadServerPort = port;
+    
+    // Create server if it doesn't exist
+    if (_uploadServer == nullptr) {
+        _uploadServer = new WebServer(port);
+        if (_uploadServer == nullptr) {
+            Serial.println("Failed to create upload server");
+            return;
+        }
+        setupUploadServer();
+    }
+    
+    _uploadServer->begin();
+    _uploadServerActive = true;
+    
+    Serial.print("Upload server started on http://");
+    Serial.print(getIPAddress());
+    Serial.print(":");
+    Serial.println(_uploadServerPort);
+    Serial.println("Navigate to this address in a web browser to upload firmware");
+}
+
+// Set up routes for the upload server
+void WiFiManager::setupUploadServer() {
+    if (_uploadServer == nullptr) return;
+    
+    // Index page
+    _uploadServer->on("/", HTTP_GET, [this]() {
+        this->handleUploadRoot();
+    });
+    
+    // Handle file upload
+    _uploadServer->on("/update", HTTP_POST, [this]() {
+        this->handleUploadComplete();
+    }, [this]() {
+        this->handleFileUpload();
+    });
+    
+    // Set up 404 page
+    _uploadServer->onNotFound([this]() {
+        this->_uploadServer->send(404, "text/plain", "404: Not Found");
+    });
+}
+
+// Handle server tasks
+void WiFiManager::handleUploadServer() {
+    if (_uploadServerActive && _uploadServer != nullptr) {
+        _uploadServer->handleClient();
+    }
+}
+
+// Root page handler
+void WiFiManager::handleUploadRoot() {
+    const char* html = R"html(
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>ESP Firmware Update</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 20px;
+                background-color: #f0f0f0;
+            }
+            .container {
+                background-color: white;
+                border-radius: 5px;
+                padding: 20px;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+                max-width: 500px;
+                margin: 0 auto;
+            }
+            h1 {
+                color: #0066cc;
+                text-align: center;
+            }
+            form {
+                margin-top: 20px;
+            }
+            .file-input {
+                margin: 10px 0;
+                padding: 10px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                width: 100%;
+            }
+            .btn {
+                background-color: #0066cc;
+                color: white;
+                padding: 10px 15px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                width: 100%;
+                font-size: 16px;
+                margin-top: 10px;
+            }
+            .btn:hover {
+                background-color: #0055aa;
+            }
+            .status {
+                margin-top: 20px;
+                padding: 10px;
+                border-radius: 4px;
+                text-align: center;
+            }
+            .info {
+                margin-top: 20px;
+                font-size: 0.9em;
+                color: #666;
+            }
+            progress {
+                width: 100%;
+                height: 20px;
+                margin-top: 10px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>ESP Firmware Update</h1>
+            <form method="POST" action="/update" enctype="multipart/form-data" id="upload_form">
+                <input type="file" name="update" class="file-input" accept=".bin">
+                <input type="submit" value="Upload Firmware" class="btn">
+                <div class="status">
+                    <progress id="progressBar" style="display:none"></progress>
+                    <div id="status"></div>
+                </div>
+            </form>
+            <div class="info">
+                <p>Select a .bin firmware file to upload to the device.</p>
+                <p><strong>Warning:</strong> Do not interrupt the upload process once started.</p>
+            </div>
+        </div>
+        <script>
+            var form = document.getElementById('upload_form');
+            var progressBar = document.getElementById('progressBar');
+            var statusDiv = document.getElementById('status');
+            
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                var file = document.querySelector('input[type="file"]').files[0];
+                var xhr = new XMLHttpRequest();
+                var formData = new FormData();
+                
+                if (!file) {
+                    statusDiv.innerHTML = 'Please select a file first!';
+                    return false;
+                }
+                
+                formData.append('update', file);
+                
+                xhr.open('POST', form.action, true);
+                
+                xhr.upload.addEventListener('progress', function(e) {
+                    if (e.lengthComputable) {
+                        progressBar.style.display = 'block';
+                        progressBar.value = e.loaded;
+                        progressBar.max = e.total;
+                        statusDiv.innerHTML = 'Upload progress: ' + Math.round((e.loaded / e.total) * 100) + '%';
+                    }
+                });
+                
+                xhr.onreadystatechange = function() {
+                    if (xhr.readyState === 4) {
+                        if (xhr.status === 200) {
+                            statusDiv.innerHTML = 'Upload successful! Device is rebooting...';
+                            setTimeout(function() {
+                                window.location.reload();
+                            }, 10000);
+                        } else {
+                            statusDiv.innerHTML = 'Upload failed with status: ' + xhr.status;
+                        }
+                    }
+                };
+                
+                statusDiv.innerHTML = 'Starting upload...';
+                xhr.send(formData);
+            });
+        </script>
+    </body>
+    </html>
+    )html";
+    
+    _uploadServer->send(200, "text/html", html);
+}
+
+// Handle file upload
+void WiFiManager::handleFileUpload() {
+    HTTPUpload& upload = _uploadServer->upload();
+    
+    if (upload.status == UPLOAD_FILE_START) {
+        Serial.printf("Update: %s\n", upload.filename.c_str());
+        
+        // Blink LED rapidly to indicate upload beginning
+        if (_statusLedPin >= 0) {
+            for (int i = 0; i < 5; i++) {
+                digitalWrite(_statusLedPin, !digitalRead(_statusLedPin));
+                delay(100);
+            }
+        }
+        
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+            Update.printError(Serial);
+        }
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+        if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+            Update.printError(Serial);
+        }
+        
+        // Toggle LED for each chunk
+        if (_statusLedPin >= 0) {
+            digitalWrite(_statusLedPin, !digitalRead(_statusLedPin));
+        }
+        
+        // Log progress
+        static int lastProgress = 0;
+        int progress = (Update.progress() * 100) / Update.size();
+        if (progress != lastProgress && progress % 10 == 0) {
+            Serial.printf("Upload progress: %d%%\n", progress);
+            lastProgress = progress;
+        }
+    } else if (upload.status == UPLOAD_FILE_END) {
+        if (Update.end(true)) {
+            Serial.printf("Update Success: %u bytes\nRebooting...\n", upload.totalSize);
+            
+            // Solid LED to indicate success
+            if (_statusLedPin >= 0) {
+                digitalWrite(_statusLedPin, HIGH);
+            }
+        } else {
+            Update.printError(Serial);
+            
+            // Rapid blinking to indicate error
+            if (_statusLedPin >= 0) {
+                for (int i = 0; i < 10; i++) {
+                    digitalWrite(_statusLedPin, !digitalRead(_statusLedPin));
+                    delay(50);
+                }
+            }
+        }
+    }
+}
+
+// Upload complete handler
+void WiFiManager::handleUploadComplete() {
+    _uploadServer->send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
+    delay(1000);
+    ESP.restart();
+}
+
+// Start remote monitor server (telnet-style)
+void WiFiManager::beginRemoteMonitor(int port) {
+    if (!isConnected()) {
+        Serial.println("Cannot start monitor: Not connected to WiFi");
+        return;
+    }
+    
+    _monitorPort = port;
+    
+    // Create server if it doesn't exist
+    if (_monitorServer == nullptr) {
+        _monitorServer = new WiFiServer(port);
+        if (_monitorServer == nullptr) {
+            Serial.println("Failed to create monitor server");
+            return;
+        }
+    }
+    
+    _monitorServer->begin();
+    _monitorActive = true;
+    
+    Serial.print("Remote monitor started on telnet://");
+    Serial.print(getIPAddress());
+    Serial.print(":");
+    Serial.println(_monitorPort);
+    Serial.println("Use a telnet client to connect");
+}
+
+// Handle monitor tasks
+void WiFiManager::handleRemoteMonitor() {
+    if (!_monitorActive || _monitorServer == nullptr) return;
+    
+    // Check if there are any new clients
+    if (_monitorServer->hasClient()) {
+        // If we already have a client, disconnect it
+        if (_monitorClient && _monitorClient.connected()) {
+            _monitorClient.stop();
+        }
+        
+        // Connect to new client
+        _monitorClient = _monitorServer->available();
+        _monitorClient.println();
+        _monitorClient.println("ESP Remote Monitor");
+        _monitorClient.println("Type 'help' for commands");
+        _monitorClient.println("===================");
+    }
+    
+    // Check for data from client
+    if (_monitorClient && _monitorClient.connected() && _monitorClient.available()) {
+        String command = _monitorClient.readStringUntil('\n');
+        command.trim();
+        
+        if (command == "help") {
+            _monitorClient.println("Available commands:");
+            _monitorClient.println("  help - Show this help");
+            _monitorClient.println("  status - Show WiFi status");
+            _monitorClient.println("  scan - Scan for WiFi networks");
+            _monitorClient.println("  reboot - Reboot device");
+            _monitorClient.println("  exit/quit - Close connection");
+        } else if (command == "status") {
+            _monitorClient.println("=== WiFi Status ===");
+            _monitorClient.print("Connected: ");
+            _monitorClient.println(isConnected() ? "Yes" : "No");
+            _monitorClient.print("IP: ");
+            _monitorClient.println(getIPAddress());
+            _monitorClient.print("RSSI: ");
+            _monitorClient.println(getSignalStrength());
+            _monitorClient.print("MAC: ");
+            _monitorClient.println(getMACAddress());
+        } else if (command == "scan") {
+            _monitorClient.println("Scanning for networks...");
+            
+            int numNetworks = WiFi.scanNetworks();
+            if (numNetworks == 0) {
+                _monitorClient.println("No networks found");
+            } else {
+                _monitorClient.print("Found ");
+                _monitorClient.print(numNetworks);
+                _monitorClient.println(" networks:");
+                
+                for (int i = 0; i < numNetworks; i++) {
+                    _monitorClient.print(i + 1);
+                    _monitorClient.print(": ");
+                    _monitorClient.print(WiFi.SSID(i));
+                    _monitorClient.print(" (");
+                    _monitorClient.print(WiFi.RSSI(i));
+                    _monitorClient.println(" dBm)");
+                    delay(10);
+                }
+            }
+            
+            WiFi.scanDelete();
+        } else if (command == "reboot") {
+            _monitorClient.println("Rebooting device...");
+            delay(500);
+            ESP.restart();
+        } else if (command == "exit" || command == "quit") {
+            _monitorClient.println("Closing connection. Goodbye!");
+            _monitorClient.stop();
+        } else if (command.length() > 0) {
+            _monitorClient.print("Unknown command: ");
+            _monitorClient.println(command);
+        }
+    }
+}
+
+// Write to remote monitor
+void WiFiManager::remoteLog(const String& message) {
+    if (_monitorClient && _monitorClient.connected()) {
+        _monitorClient.println(message);
+    }
+}

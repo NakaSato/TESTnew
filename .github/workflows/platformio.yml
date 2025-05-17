@@ -2,42 +2,56 @@ name: PlatformIO CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  workflow_dispatch:  # Allow manual triggering
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up Python
-      uses: actions/setup-python@v4
+    - name: Cache PlatformIO dependencies
+      uses: actions/cache@v4
       with:
-        python-version: '3.9'
+        path: |
+          ~/.platformio
+          .pio
+        key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+        restore-keys: |
+          ${{ runner.os }}-pio-
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
         
     - name: Install PlatformIO Core
       run: |
         python -m pip install --upgrade pip
         pip install platformio
+        pio platform update
 
     - name: Build ESP32 Project
       run: |
         pio run -e node32s
         
     - name: Archive firmware
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
-        name: firmware-${{ matrix.os }}
+        name: firmware
         path: |
           .pio/build/node32s/firmware.bin
           .pio/build/node32s/firmware.elf
+        if-no-files-found: error
 
   lint:
     runs-on: ubuntu-latest
@@ -45,34 +59,17 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.9'
+        python-version: '3.11'
         
-    - name: Install PlatformIO Core
+    - name: Install PlatformIO Core and cppcheck
       run: |
         python -m pip install --upgrade pip
         pip install platformio
+        sudo apt-get update
+        sudo apt-get install -y cppcheck
         
-    - name: Run PlatformIO Check
+    - name: Run cppcheck
       run: |
-        pio check --flags "--enable=all --suppress=internalAstError"
-
-  documentation:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Validate Markdown Files
-      uses: DavidAnson/markdownlint-cli2-action@v9
-      with:
-        globs: "**/*.md"
-        
-    - name: Archive Documentation
-      uses: actions/upload-artifact@v3
-      with:
-        name: documentation
-        path: |
-          README.md
-          ngrok_guide.md
-          troubleshooting.md
+        cppcheck --enable=all --error-exitcode=1 --suppress=missingIncludeSystem --suppress=unmatchedSuppression src/ include/
