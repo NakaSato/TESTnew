@@ -1,0 +1,7 @@
+version: 2
+authtoken: # Will be filled automatically from your ngrok config
+tunnels:
+  esp32:
+    proto: http
+    addr: 80
+    subdomain: esp32-device
